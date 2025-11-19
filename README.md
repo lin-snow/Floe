@@ -4,7 +4,7 @@ Workflow &amp;&amp; DSL MVP
 
 ---
 
-# 大致技术方案
+# 大致技术方案 v1(已实现)
 
 下面是一份面向可实现性的**详细技术方案**（包含 DSL schema、runtime 模块、并发/内存策略、变量替换、trace 格式、测试/验收要点与实现要点），你可以直接拿去实现或交接给同事。
 
@@ -207,7 +207,7 @@ type ToolFunc func(ctx context.Context, inputs map[string]interface{}) (map[stri
 
 ---
 
-# AI IDE Prompt
+# AI IDE Prompt(已解决)
 
 我将给你一个完整的技术方案，请按照这个方案 _从零创建一个可运行的 MVP 实现_。
 

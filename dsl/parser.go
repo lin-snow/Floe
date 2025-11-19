@@ -20,6 +20,8 @@ type Step struct {
 	Tool     string                 `mapstructure:"tool,omitempty"`
 	Input    map[string]interface{} `mapstructure:"input,omitempty"`
 	Output   string                 `mapstructure:"output,omitempty"`
+	Messages map[string]string      `mapstructure:"messages,omitempty"` // New in v0.2
+	Next     string                 `mapstructure:"next,omitempty"`     // New in v0.2
 	Branches []Step                 `mapstructure:"branches,omitempty"` // For parallel type
 }
 

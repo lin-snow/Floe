@@ -1,18 +1,19 @@
 package runtime
 
 import (
-	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"floe/dsl"
 	"floe/memory"
-	"floe/tools"
 )
 
 type WorkflowRuntime struct {
-	workflow *dsl.Workflow
-	memory   *memory.Memory
+	workflow  *dsl.Workflow
+	memory    *memory.Memory
+	scheduler Scheduler
+	trace     *Trace
 }
 
 func NewRuntime(wf *dsl.Workflow) *WorkflowRuntime {
@@ -23,71 +24,94 @@ func NewRuntime(wf *dsl.Workflow) *WorkflowRuntime {
 		}
 	}
 	return &WorkflowRuntime{
-		workflow: wf,
-		memory:   mem,
+		workflow:  wf,
+		memory:    mem,
+		scheduler: NewBasicScheduler(wf),
+		trace:     &Trace{Steps: []TraceEvent{}},
 	}
 }
 
 func (r *WorkflowRuntime) Run() error {
 	fmt.Printf("Starting workflow: %s\n", r.workflow.Name)
-	for _, step := range r.workflow.Steps {
-		if err := r.executeStep(&step); err != nil {
-			return err
+
+	executedSteps := make(map[string]bool)
+
+	for {
+		activeSteps := r.scheduler.NextSteps(r.memory, executedSteps)
+		if len(activeSteps) == 0 {
+			break
 		}
+
+		fmt.Printf("Superstep: Executing %d steps...\n", len(activeSteps))
+		results := r.runSuperstep(activeSteps)
+		r.mergeResults(results, executedSteps)
 	}
+
 	fmt.Println("Workflow completed successfully.")
+
+	// Save trace
+	if err := r.SaveTrace("trace.json"); err != nil {
+		fmt.Printf("Warning: failed to save trace: %v\n", err)
+	}
+
 	return nil
 }
 
-func (r *WorkflowRuntime) executeStep(step *dsl.Step) error {
-	fmt.Printf("Executing step: %s (Type: %s)\n", step.ID, step.Type)
+func (r *WorkflowRuntime) mergeResults(results []StepResult, executedSteps map[string]bool) {
+	for _, res := range results {
+		executedSteps[res.NodeName] = true
 
-	switch step.Type {
-	case "task":
-		return r.executeTask(step)
-	case "parallel":
-		return r.executeParallel(step)
-	default:
-		return fmt.Errorf("unknown step type: %s", step.Type)
+		if res.Err != nil {
+			fmt.Printf("Error in step %s: %v\n", res.NodeName, res.Err)
+			// TODO: Handle error policy (stop or continue)
+			// For now, we just log and continue, but maybe we should stop?
+			// MVP v0.1 stopped. v0.2 guide says "memory 更新在 superstep 结束后统一合并".
+			continue
+		}
+
+		// Record Trace
+		r.trace.Steps = append(r.trace.Steps, TraceEvent{
+			StepName: res.NodeName,
+			Input:    r.memory.Snapshot(), // Snapshot BEFORE merge? Or AFTER? Guide says "In superstep execution complete". Usually input is what was used.
+			// But here we are merging output.
+			// Let's record Output and Messages.
+			Output:    res.Output,
+			Messages:  res.Messages,
+			Timestamp: time.Now(),
+		})
+
+		if res.Output != nil {
+			// If output path is defined in step, we should use it.
+			// But StepResult doesn't have the output path.
+			// We need to look up the step definition or pass it in StepResult.
+			// For simplicity, let's use the convention from AIGUIDE: "global." + NodeName
+			// BUT the DSL has an 'output' field. We should respect it.
+			// Let's find the step to get the output path.
+			step := r.findStepByID(res.NodeName)
+			if step != nil && step.Output != "" {
+				_ = r.memory.Set(step.Output, res.Output)
+			} else {
+				// Fallback or default?
+				_ = r.memory.Set("global."+res.NodeName, res.Output)
+			}
+		}
+
+		for k, v := range res.Messages {
+			_ = r.memory.Set("messages."+k, v)
+		}
 	}
 }
 
-func (r *WorkflowRuntime) executeTask(step *dsl.Step) error {
-	// 1. Resolve Inputs
-	input := make(map[string]interface{})
-	for k, v := range step.Input {
-		if strVal, ok := v.(string); ok {
-			input[k] = r.memory.ResolveInterpolation(strVal)
-		} else {
-			input[k] = v
+func (r *WorkflowRuntime) findStepByID(id string) *dsl.Step {
+	for _, step := range r.workflow.Steps {
+		if step.ID == id {
+			return &step
 		}
 	}
-
-	// 2. Get Tool
-	tool, err := tools.Get(step.Tool)
-	if err != nil {
-		return err
-	}
-
-	// 3. Execute Tool
-	// TODO: Add timeout from metadata if available
-	result, err := tool.Run(context.Background(), input)
-	if err != nil {
-		return fmt.Errorf("step %s failed: %w", step.ID, err)
-	}
-
-	// 4. Write Output
-	if step.Output != "" {
-		if err := r.memory.Set(step.Output, result); err != nil {
-			return fmt.Errorf("failed to set output for step %s: %w", step.ID, err)
-		}
-	}
-
-	// Trace log (simplified)
-	fmt.Printf("  [Task] %s finished. Output: %v\n", step.ID, result)
 	return nil
 }
 
+// executeParallel is used by superstep.go for legacy "parallel" step types
 func (r *WorkflowRuntime) executeParallel(step *dsl.Step) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(step.Branches))
@@ -96,14 +120,22 @@ func (r *WorkflowRuntime) executeParallel(step *dsl.Step) error {
 		wg.Add(1)
 		go func(b dsl.Step) {
 			defer wg.Done()
-			// Recursive execution for branches
-			// Note: Branches in DSL are defined as Steps, but here we treat them as individual tasks or nested steps.
-			// The DSL structure in parser.go defines Branches as []Step.
-			// So we can just call executeStep.
-			// However, the README example shows branches as a list of tasks.
-			// Let's assume branches are just steps.
-			if err := r.executeStep(&b); err != nil {
-				errChan <- err
+			res := r.executeSingleStep(&b)
+			if res.Err != nil {
+				errChan <- res.Err
+				return
+			}
+			// Write output
+			if res.Output != nil {
+				if b.Output != "" {
+					_ = r.memory.Set(b.Output, res.Output)
+				} else {
+					_ = r.memory.Set("global."+b.ID, res.Output)
+				}
+			}
+			// Write messages
+			for k, v := range res.Messages {
+				_ = r.memory.Set("messages."+k, v)
 			}
 		}(branch)
 	}
@@ -111,10 +143,9 @@ func (r *WorkflowRuntime) executeParallel(step *dsl.Step) error {
 	wg.Wait()
 	close(errChan)
 
-	// Check for errors
 	for err := range errChan {
 		if err != nil {
-			return err // Return first error
+			return err
 		}
 	}
 

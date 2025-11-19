@@ -1,0 +1,62 @@
+{
+  "steps": [
+    {
+      "step_name": "fetch",
+      "input": {
+        "endpoint": "https://jsonplaceholder.typicode.com/todos/1"
+      },
+      "output": "{\n  \"userId\": 1,\n  \"id\": 1,\n  \"title\": \"delectus aut autem\",\n  \"completed\": false\n}",
+      "messages": {
+        "source_id": "",
+        "status": "fetched"
+      },
+      "timestamp": "2025-11-19T16:40:18.1654712+08:00"
+    },
+    {
+      "step_name": "parallel_processing",
+      "input": {
+        "endpoint": "https://jsonplaceholder.typicode.com/todos/1",
+        "global": {
+          "parsed": {
+            "completed": false,
+            "id": 1,
+            "title": "delectus aut autem",
+            "userId": 1
+          },
+          "raw": "{\n  \"userId\": 1,\n  \"id\": 1,\n  \"title\": \"delectus aut autem\",\n  \"completed\": false\n}",
+          "summary": "Summary: Text contains 12 words. Preview: {\n  \"userId\": 1,\n  \"id\": 1,\n  \"title\": \"delectus a..."
+        },
+        "messages": {
+          "parsed_title": "From Raw: {\n  \"userId\": 1,\n  \"id\": 1,\n  \"title\": \"delectus aut autem\",\n  \"completed\": false\n}",
+          "source_id": "",
+          "status": "fetched"
+        }
+      },
+      "output": null,
+      "timestamp": "2025-11-19T16:40:18.1669758+08:00"
+    },
+    {
+      "step_name": "final_report",
+      "input": {
+        "endpoint": "https://jsonplaceholder.typicode.com/todos/1",
+        "global": {
+          "parsed": {
+            "completed": false,
+            "id": 1,
+            "title": "delectus aut autem",
+            "userId": 1
+          },
+          "raw": "{\n  \"userId\": 1,\n  \"id\": 1,\n  \"title\": \"delectus aut autem\",\n  \"completed\": false\n}",
+          "summary": "Summary: Text contains 12 words. Preview: {\n  \"userId\": 1,\n  \"id\": 1,\n  \"title\": \"delectus a..."
+        },
+        "messages": {
+          "parsed_title": "From Raw: {\n  \"userId\": 1,\n  \"id\": 1,\n  \"title\": \"delectus aut autem\",\n  \"completed\": false\n}",
+          "source_id": "",
+          "status": "fetched"
+        }
+      },
+      "output": "Summary: Text contains 30 words. Preview: Title: From Raw: {\n  \"userId\": 1,\n  \"id\": 1,\n  \"ti...",
+      "timestamp": "2025-11-19T16:40:18.1669758+08:00"
+    }
+  ]
+}

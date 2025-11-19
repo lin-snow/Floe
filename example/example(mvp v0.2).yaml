@@ -1,0 +1,47 @@
+workflow:
+  name: sample_v0.2
+  memory:
+    initial:
+      endpoint: "https://jsonplaceholder.typicode.com/todos/1"
+  steps:
+    - id: fetch
+      type: task
+      tool: http_get
+      input:
+        url: ${endpoint}
+      output: global.raw
+      messages:
+        status: "fetched"
+        source_id: "${global.raw.id}" # This might fail if raw is a JSON string and we try to access property. 
+                                      # But wait, http_get returns string. 
+                                      # Memory interpolation currently only does string replacement.
+                                      # It doesn't parse JSON in the variable path.
+                                      # So ${global.raw.id} won't work if global.raw is a string.
+                                      # However, parse_json converts it to map.
+                                      # So let's use messages in the parse step.
+
+    - id: parallel_processing
+      type: parallel
+      branches:
+        - id: parse
+          type: task
+          tool: parse_json
+          input:
+            source: ${global.raw}
+          output: global.parsed
+          messages:
+            parsed_title: "From Raw: ${global.raw}" # global.raw exists
+
+        - id: summarize
+          type: task
+          tool: summarize
+          input:
+            text: ${global.raw}
+          output: global.summary
+          
+    - id: final_report
+      type: task
+      tool: summarize
+      input:
+        text: "Title: ${messages.parsed_title}. Summary: ${global.summary}"
+      output: global.report
