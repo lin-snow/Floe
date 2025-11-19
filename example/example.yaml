@@ -1,0 +1,32 @@
+workflow:
+  name: sample
+  memory:
+    initial:
+      endpoint: "https://jsonplaceholder.typicode.com/todos/1"
+  steps:
+    - id: fetch
+      type: task
+      tool: http_get
+      input:
+        url: ${endpoint}
+      output: global.raw
+
+    - id: parallel_processing
+      type: parallel
+      branches:
+        - id: parse
+          type: task
+          tool:
+            parse_json # Note: Github zen returns text, not JSON, but let's try to parse it or change endpoint to something JSON if we want to test parse_json.
+            # Actually, let's use a JSON endpoint for better testing.
+            # Changing endpoint to httpbin.org/json
+          input:
+            source: ${global.raw}
+          output: global.parsed
+
+        - id: summarize
+          type: task
+          tool: summarize
+          input:
+            text: ${global.raw}
+          output: global.summary
