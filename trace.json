@@ -1,23 +1,53 @@
 {
   "steps": [
     {
-      "step_name": "step_start",
-      "input": {
-        "start_msg": "Starting flow"
-      },
-      "output": "Summary: Text contains 2 words. Preview: Starting flow...",
-      "timestamp": "2025-11-19T16:58:13.2785521+08:00"
-    },
-    {
-      "step_name": "step_end",
+      "step_name": "retry_step",
       "input": {
         "global": {
-          "start": "Summary: Text contains 2 words. Preview: Starting flow..."
-        },
-        "start_msg": "Starting flow"
+          "retry_count": 0
+        }
       },
-      "output": "Summary: Text contains 4 words. Preview: Finished. Skipped middle step....",
-      "timestamp": "2025-11-19T16:58:13.2785521+08:00"
+      "output": null,
+      "timestamp": "2025-11-19T17:29:01.8105777+08:00",
+      "error": "Get \"http://localhost:9999/nonexistent\": dial tcp [::1]:9999: connectex: No connection could be made because the target machine actively refused it.",
+      "retries": 2,
+      "strategy": "retry-fallback",
+      "fallback": "fallback_handler"
+    },
+    {
+      "step_name": "fallback_handler",
+      "input": {
+        "global": {
+          "retry_count": 0
+        }
+      },
+      "output": "Summary: Text contains 6 words. Preview: Fallback triggered due to retry_step failure....",
+      "timestamp": "2025-11-19T17:29:01.8105777+08:00"
+    },
+    {
+      "step_name": "ignore_step",
+      "input": {
+        "global": {
+          "fallback_result": "Summary: Text contains 6 words. Preview: Fallback triggered due to retry_step failure....",
+          "retry_count": 0
+        }
+      },
+      "output": null,
+      "timestamp": "2025-11-19T17:29:01.8116225+08:00",
+      "error": "Get \"http://localhost:9999/another_fail\": dial tcp [::1]:9999: connectex: No connection could be made because the target machine actively refused it.",
+      "strategy": "ignore",
+      "ignored": true
+    },
+    {
+      "step_name": "success_step",
+      "input": {
+        "global": {
+          "fallback_result": "Summary: Text contains 6 words. Preview: Fallback triggered due to retry_step failure....",
+          "retry_count": 0
+        }
+      },
+      "output": "Summary: Text contains 4 words. Preview: Workflow continued after ignore_step....",
+      "timestamp": "2025-11-19T17:29:01.8116225+08:00"
     }
   ]
 }

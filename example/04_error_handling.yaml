@@ -1,0 +1,50 @@
+workflow:
+  name: error_handling_demo
+  memory:
+    initial:
+      global.retry_count: 0
+
+  steps:
+    # 1. Retry Strategy Demo
+    # We use a mock tool that fails until a condition is met (simulated by external state or just random? 
+    # Since we don't have a "fail_n_times" tool, we can use http_get to a non-existent URL to simulate failure.
+    - id: retry_step
+      type: task
+      tool: http_get
+      input:
+        url: "http://localhost:9999/nonexistent" # Should fail
+      error:
+        strategy: retry
+        retries: 2
+        delay_ms: 100
+      # This step will eventually fail after 2 retries.
+      # But wait, if it fails, the workflow stops (default fail after retries).
+      # To continue testing other features, we should probably use 'ignore' or 'fallback' for the final failure.
+      # Let's use fallback to demonstrate fallback.
+        fallback: fallback_handler
+
+    # 2. Fallback Step
+    - id: fallback_handler
+      type: task
+      tool: summarize
+      input:
+        text: "Fallback triggered due to retry_step failure."
+      output: global.fallback_result
+
+    # 3. Ignore Strategy Demo
+    - id: ignore_step
+      type: task
+      tool: http_get
+      input:
+        url: "http://localhost:9999/another_fail"
+      error:
+        strategy: ignore
+      next: success_step
+
+    # 4. Success Step (to prove ignore worked)
+    - id: success_step
+      type: task
+      tool: summarize
+      input:
+        text: "Workflow continued after ignore_step."
+      output: global.final_result

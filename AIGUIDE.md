@@ -1,212 +1,146 @@
-# v0.2 版本技术方案与指导
+# **Floe v0.4 — AI IDE Implementation Guide**
 
-# Floe Runtime v0.2 技术方案
-
-**目标：在保持当前 MVP 结构的前提下，引入 Pregel/LangGraph 的关键能力，构建可扩展的智能执行引擎基础架构。**
-本版本属于渐进式增强，而非重构。
+目标是在现有 v0.3 基础上，为 Floe 增加 **条件执行（Conditionals）** 和 **动态分支（Dynamic Routing）** 功能，同时保持 DSL 的结构化风格、运行时的超步模型、以及可追踪性。
 
 ---
 
-# 1. Superstep Runtime（轻量 Pregel 调度层）
+## **1. 目标功能**
 
-## 1.1 目标
+在 v0.4，你需要让 Floe 支持：
 
-将当前“顺序执行 + 平行 step”升级为**基于超步 (superstep) 的统一调度模型**，为之后的图结构、并发执行和状态一致性奠定基础。
+### **1. Conditions（if）**
 
-## 1.2 新增结构
+允许每个 Step 指定 `when` 字段，判断当前内存、消息、输入等是否满足条件，若不满足则跳过该 step。
 
-```
-type StepResult struct {
-    NodeName string
-    Output   any
-    Messages map[string]any
-    Err      error
-}
-```
-
-新增执行循环：
-
-```
-func (r *WorkflowRuntime) Run() error {
-    for {
-        activeSteps := r.scheduler.NextSteps(r.memory)
-
-        if len(activeSteps) == 0 {
-            break
-        }
-
-        results := r.runSuperstep(activeSteps)
-        r.mergeResults(results)
-    }
-
-    return nil
-}
-```
-
-## 1.3 关键变化
-
-- 所有步骤都由 scheduler 决定是否执行
-- 同一 superstep 内的节点可并行执行（goroutine）
-- memory 更新在 superstep 结束后统一合并（隔离 + 确定性）
-
----
-
-# 2. Message Passing（轻量 Aggregator）
-
-## 2.1 目标
-
-允许节点输出消息（messages），并在 superstep 合并阶段写入全局 memory。该能力是未来多代理沟通、自动链路推导的核心。
-
-## 2.2 DSL 扩展：节点输出格式
+示例：
 
 ```
 steps:
-  fetch:
-    type: task
-    tool: http_get
-    output: global.raw
-    messages:
-      nextUrl: "${global.raw.id}"
+  fetch_user:
+    action: http.get
+    args:
+      url: "https://api/user"
+
+  process_premium_user:
+    when: "${memory.user.type} == 'premium'"
+    action: logic.processPremium
 ```
 
-## 2.3 runtime 输入结构
+### **2. Dynamic next routing（动态分支）**
 
-在已有 StepResult 增加 Messages 字段：
+允许 Step 的 `next` 字段动态生成。
 
-```
-Messages map[string]any
-```
-
-## 2.4 合并逻辑
+示例：
 
 ```
-func (r *WorkflowRuntime) mergeResults(results []StepResult) {
-    for _, res := range results {
-        if res.Output != nil {
-            _ = r.memory.Set("global."+res.NodeName, res.Output)
-        }
-        for k, v := range res.Messages {
-            _ = r.memory.Set("messages."+k, v)
-        }
-    }
-}
+next:
+  on_success: "notify"
+  on_failure: "retry_fetch"
 ```
+
+或 DSL 表示：
+
+```
+next:
+  route: "${memory.fetch.status == 200 ? 'process' : 'retry'}"
+```
+
+### **3. Runtime 变化**
+
+Scheduler 增加：
+
+- 条件判断逻辑
+- 动态路由解析
+- 生成新的活跃 node 集合
+
+Superstep 模型保持不变。
+
+### **4. Trace 扩展**
+
+在 trace 中记录：
+
+- 条件是否被触发
+- 路由的计算结果
+- 被跳过的 steps
 
 ---
 
-# 3. Execution Trace（可调试性增强）
+## **2. DSL 需要你实现的变动**
 
-## 3.1 目标
-
-为每个 step 记录输入 / 输出状态，用于调试、可视化、重放（replay）。
-
-## 3.2 数据结构
+扩展 `Step` 结构：
 
 ```
-type Trace struct {
-    Steps []TraceEvent
-}
-
-type TraceEvent struct {
-    StepName  string
-    Input     map[string]any
-    Output    any
-    Messages  map[string]any
-    Timestamp time.Time
+type Step struct {
+    Name      string            `yaml:"-"`
+    Action    string            `yaml:"action"`
+    Args      map[string]any    `yaml:"args"`
+    When      string            `yaml:"when"`
+    Next      any               `yaml:"next"` // string | map[string]string
+    Messages  map[string]any    `yaml:"messages"`
 }
 ```
 
-## 3.3 记录位置
+新增的部分：
 
-在 superstep 执行完成：
+1. **When 字段**：字符串表达式，true 执行，false 跳过。
+2. **Next 字段**可允许：
+   - string: 固定 next
+   - map: 动态选择 next
+   - expression: 返回 step 名
 
-```
-r.trace.Steps = append(r.trace.Steps, TraceEvent{
-    StepName: res.NodeName,
-    Input:    r.memory.Snapshot(),
-    Output:   res.Output,
-    Messages: res.Messages,
-    Timestamp: time.Now(),
-})
-```
-
-## 3.4 导出
-
-提供：
-
-```
-func (r *WorkflowRuntime) SaveTrace(path string) error
-```
-
-输出 trace.json。
+表达式解析仍沿用 `${ }` 模式。
 
 ---
 
-# 4. DSL v0.2：图结构与流转关系
+## **3. Runtime 详细要求**
 
-## 4.1 目标
+### **3.1 Condition Logic（在调度前进行）**
 
-为 runtime 提供拓扑结构依据，让调度器根据依赖关系决定执行顺序。
+在 scheduler 中增加：
 
-## 4.2 DSL 改进方案
+- EvaluateCondition(step, memory) → bool
+- 若 false，则将该 step 标记为 “skipped” 并写入 trace
 
-### 方案 A：每个 step 指定 next
+你需要在 scheduler 开始本轮 superstep 调度前判断哪些 step 应执行。
 
-最小改动：
+### **3.2 Dynamic Routing**
 
-```
-steps:
-  parse:
-    type: task
-    next: summarize
+在解析 `next` 时需要支持三类：
 
-  summarize:
-    type: task
-```
+- **string**：直接返回
+- **map**：基于运行结果或 messages 判断属于哪个 key
+- **expression**：返回 step 名称
 
-### 方案 B：显式 edges（未来版本）
+运行时的规则：
 
-```
-edges:
-  - from: parse
-    to: summarize
-```
+优先级 = map.route > string > expression
 
-## 4.3 调度器
+### **3.3 超步模型集成**
 
-新增：
+保持 superstep：
 
-```
-type Scheduler interface {
-    NextSteps(memory *Memory) []dsl.Step
-}
-```
-
-MVP 版本中：
-
-- 如果 step 没有执行过 → 执行
-- 如果 step 有 next 字段 → 在下一 superstep 启动 next
-
-这保留灵活性，也允许以后支持循环、反馈、并行 DAG。
+- single step 不变
+- 合并 outputs → 更新 memory
+- 合并 messages → 更新 memory
+- 根据 next 结果生成下一轮 active set
 
 ---
 
-# 5. 目录结构（增量更新）
+## **4. Trace 扩展要求**
+
+trace.json 每个 step 需要新增字段：
 
 ```
-/runtime
-    runtime.go
-    scheduler.go         ← 新增
-    superstep.go         ← 新增
-    trace.go             ← 新增
-
-/dsl
-    parser.go
-    model.go             ← 扩展 step/edges 结构
-
-/memory
-    memory.go
-
-/tools
-    ...
+{
+  "step": "process_premium_user",
+  "status": "skipped | executed",
+  "condition": {
+    "raw": "${memory.user.type} == 'premium'",
+    "result": true
+  },
+  "routing": {
+    "raw": "memory.fetch.status == 200 ? 'process' : 'retry'",
+    "result": "process"
+  }
+}
 ```

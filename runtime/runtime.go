@@ -9,13 +9,17 @@ import (
 	"floe/memory"
 )
 
+// WorkflowRuntime 是工作流执行的运行时环境。
+// 它管理工作流的生命周期、内存状态、调度和执行跟踪。
 type WorkflowRuntime struct {
-	workflow  *dsl.Workflow
-	memory    *memory.Memory
-	scheduler Scheduler
-	trace     *Trace
+	workflow  *dsl.Workflow  // 工作流定义
+	memory    *memory.Memory // 全局内存
+	scheduler Scheduler      // 调度器
+	trace     *Trace         // 执行跟踪
 }
 
+// NewRuntime 创建一个新的 WorkflowRuntime 实例。
+// 它会初始化内存，并加载工作流定义的初始变量。
 func NewRuntime(wf *dsl.Workflow) *WorkflowRuntime {
 	mem := memory.NewMemory()
 	if wf.Memory.Initial != nil {
@@ -31,13 +35,16 @@ func NewRuntime(wf *dsl.Workflow) *WorkflowRuntime {
 	}
 }
 
+// Run 开始执行工作流。
+// 它使用 Superstep 模式：调度 -> 执行 -> 合并结果，直到没有更多步骤可执行。
 func (r *WorkflowRuntime) Run() error {
 	fmt.Printf("Starting workflow: %s\n", r.workflow.Name)
 
 	executedSteps := make(map[string]bool)
+	var lastResults []StepResult
 
 	for {
-		activeSteps := r.scheduler.NextSteps(r.memory, executedSteps)
+		activeSteps := r.scheduler.NextSteps(r.memory, executedSteps, lastResults)
 		if len(activeSteps) == 0 {
 			break
 		}
@@ -45,6 +52,8 @@ func (r *WorkflowRuntime) Run() error {
 		fmt.Printf("Superstep: Executing %d steps...\n", len(activeSteps))
 		results := r.runSuperstep(activeSteps)
 		r.mergeResults(results, executedSteps)
+
+		lastResults = results
 	}
 
 	fmt.Println("Workflow completed successfully.")
@@ -63,35 +72,31 @@ func (r *WorkflowRuntime) mergeResults(results []StepResult, executedSteps map[s
 
 		if res.Err != nil {
 			fmt.Printf("Error in step %s: %v\n", res.NodeName, res.Err)
-			// TODO: Handle error policy (stop or continue)
-			// For now, we just log and continue, but maybe we should stop?
-			// MVP v0.1 stopped. v0.2 guide says "memory 更新在 superstep 结束后统一合并".
-			continue
+			// Continue even if error, unless strategy was fail (which is handled in executeSingleStep by returning Err)
+			// If executeSingleStep returned Err, it means it failed after retries/fallback.
+			// So we probably should stop or at least record it.
+			// For now, we just log.
 		}
 
 		// Record Trace
 		r.trace.Steps = append(r.trace.Steps, TraceEvent{
-			StepName: res.NodeName,
-			Input:    r.memory.Snapshot(), // Snapshot BEFORE merge? Or AFTER? Guide says "In superstep execution complete". Usually input is what was used.
-			// But here we are merging output.
-			// Let's record Output and Messages.
+			StepName:  res.NodeName,
+			Input:     r.memory.Snapshot(),
 			Output:    res.Output,
 			Messages:  res.Messages,
 			Timestamp: time.Now(),
+			Error:     res.ErrorMsg,
+			Retries:   res.Retries,
+			Strategy:  res.Strategy,
+			Fallback:  res.Fallback,
+			Ignored:   res.Ignored,
 		})
 
 		if res.Output != nil {
-			// If output path is defined in step, we should use it.
-			// But StepResult doesn't have the output path.
-			// We need to look up the step definition or pass it in StepResult.
-			// For simplicity, let's use the convention from AIGUIDE: "global." + NodeName
-			// BUT the DSL has an 'output' field. We should respect it.
-			// Let's find the step to get the output path.
 			step := r.findStepByID(res.NodeName)
 			if step != nil && step.Output != "" {
 				_ = r.memory.Set(step.Output, res.Output)
 			} else {
-				// Fallback or default?
 				_ = r.memory.Set("global."+res.NodeName, res.Output)
 			}
 		}
