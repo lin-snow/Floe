@@ -1,0 +1,29 @@
+workflow:
+  name: 02_parallel_aggregation
+  memory:
+    initial:
+      data: "Some raw data to process"
+  steps:
+    - id: parallel_process
+      type: parallel
+      branches:
+        - id: branch_a
+          type: task
+          tool: summarize
+          input:
+            text: "Branch A processing: ${data}"
+          output: global.res_a
+          
+        - id: branch_b
+          type: task
+          tool: summarize
+          input:
+            text: "Branch B processing: ${data}"
+          output: global.res_b
+
+    - id: aggregate
+      type: task
+      tool: summarize
+      input:
+        text: "Aggregated Result: A=[${global.res_a}] B=[${global.res_b}]"
+      output: global.final_result

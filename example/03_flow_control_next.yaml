@@ -1,0 +1,27 @@
+workflow:
+  name: 03_flow_control_next
+  memory:
+    initial:
+      start_msg: "Starting flow"
+  steps:
+    - id: step_start
+      type: task
+      tool: summarize
+      input:
+        text: "${start_msg}"
+      output: global.start
+      next: step_end # Skip step_middle
+
+    - id: step_middle
+      type: task
+      tool: summarize
+      input:
+        text: "This should be skipped"
+      output: global.middle
+
+    - id: step_end
+      type: task
+      tool: summarize
+      input:
+        text: "Finished. Skipped middle step."
+      output: global.end
