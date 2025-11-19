@@ -23,7 +23,7 @@ func main() {
 	filename := args[0]
 
 	// 1. Parse DSL
-	workflow, err := dsl.Parse(filename)
+	workflow, err := dsl.ParseWorkflow(filename)
 	if err != nil {
 		log.Fatalf("Failed to parse workflow: %v", err)
 	}

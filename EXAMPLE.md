@@ -58,3 +58,29 @@
 - `fallback_handler` is executed.
 - `ignore_step` fails but does not stop the workflow.
 - `success_step` runs successfully.
+
+## 05_conditionals_routing.yaml
+
+**Purpose**: Demonstrates Floe v0.4 features: Conditional Execution (`when`) and Dynamic Routing (`next`).
+**Scenario**:
+
+1.  **Conditional Execution**:
+    - `check_premium`: Checks if `global.user_type` is "premium". Since it is, this step executes.
+    - `check_regular`: Checks if `global.user_type` is "regular". Since it's not, this step is skipped.
+2.  **Dynamic Routing (Map)**:
+    - `route_by_status`: Evaluates conditions in the `next` map.
+      - `"${global.status} == 200"` evaluates to true, so it routes to `success_path`.
+3.  **Dynamic Routing (Expression)**:
+    - `success_path`: Executes and proceeds to `dynamic_expr_step`.
+    - `dynamic_expr_step`: Uses `next: "${global.next_target}"` to dynamically jump to `target_a`.
+4.  **Target Execution**:
+    - `target_a`: Executes as the target of the dynamic jump.
+    - `target_b`: Executes sequentially after `target_a`.
+
+**Expected Result**:
+
+- `check_premium` executes.
+- `check_regular` is skipped (status: "skipped" in trace).
+- Workflow routes to `success_path` then `dynamic_expr_step`.
+- `dynamic_expr_step` jumps to `target_a`.
+- Trace confirms the routing logic and skipped steps.

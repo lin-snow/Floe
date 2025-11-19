@@ -1,6 +1,9 @@
 package dsl
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/spf13/viper"
 )
 
@@ -32,12 +35,60 @@ type Step struct {
 	Input    map[string]interface{} `mapstructure:"input"`    // 输入参数，支持变量插值
 	Output   string                 `mapstructure:"output"`   // 输出结果存储的内存路径
 	Branches []Step                 `mapstructure:"branches"` // 并行分支（仅 parallel 类型）
-	Next     string                 `mapstructure:"next"`     // 下一步骤的 ID（用于流程控制）
+	Next     interface{}            `mapstructure:"next"`     // 下一步骤的 ID 或路由配置 (string | map)
+	When     string                 `mapstructure:"when"`     // 执行条件表达式
 	Messages map[string]string      `mapstructure:"messages"` // 步骤产生的消息，用于消息传递
 	Error    ErrorConfig            `mapstructure:"error"`    // 错误处理配置
 }
 
-func Parse(filename string) (*Workflow, error) {
+// NextType defines the type of the Next field
+type NextType int
+
+const (
+	NextStatic NextType = iota
+	NextMap
+	NextExpr
+)
+
+// NormalizedNext holds the normalized next configuration
+type NormalizedNext struct {
+	Type   NextType
+	Static string
+	Map    map[string]string
+	Expr   string
+}
+
+// NormalizeNext parses the Next field into a NormalizedNext struct
+func NormalizeNext(next interface{}) (*NormalizedNext, error) {
+	if next == nil {
+		return nil, nil
+	}
+
+	switch v := next.(type) {
+	case string:
+		if strings.HasPrefix(v, "${") {
+			return &NormalizedNext{Type: NextExpr, Expr: v}, nil
+		}
+		return &NormalizedNext{Type: NextStatic, Static: v}, nil
+	case map[string]interface{}:
+		// Convert map[string]interface{} to map[string]string
+		m := make(map[string]string)
+		for k, val := range v {
+			strVal, ok := val.(string)
+			if !ok {
+				return nil, fmt.Errorf("next map values must be strings, got %T", val)
+			}
+			m[k] = strVal
+		}
+		return &NormalizedNext{Type: NextMap, Map: m}, nil
+	case map[string]string:
+		return &NormalizedNext{Type: NextMap, Map: v}, nil
+	default:
+		return nil, fmt.Errorf("unsupported type for next: %T", next)
+	}
+}
+
+func ParseWorkflow(filename string) (*Workflow, error) {
 	v := viper.New()
 	v.SetConfigFile(filename)
 	v.SetConfigType("yaml")

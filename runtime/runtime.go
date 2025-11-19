@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"floe/dsl"
+	"floe/expr"
 	"floe/memory"
 )
 
@@ -44,13 +45,78 @@ func (r *WorkflowRuntime) Run() error {
 	var lastResults []StepResult
 
 	for {
-		activeSteps := r.scheduler.NextSteps(r.memory, executedSteps, lastResults)
+		activeSteps, routingTraces := r.scheduler.NextSteps(r.memory, executedSteps, lastResults)
+
+		// Update routing info in trace for previous steps
+		if len(routingTraces) > 0 {
+			for i := len(r.trace.Steps) - 1; i >= 0; i-- {
+				stepName := r.trace.Steps[i].StepName
+				if rt, ok := routingTraces[stepName]; ok {
+					r.trace.Steps[i].Routing = rt
+					delete(routingTraces, stepName) // Remove to avoid double update (though unlikely)
+				}
+			}
+		}
+
 		if len(activeSteps) == 0 {
 			break
 		}
 
-		fmt.Printf("Superstep: Executing %d steps...\n", len(activeSteps))
-		results := r.runSuperstep(activeSteps)
+		// Filter steps based on 'When' condition
+		var stepsToExecute []dsl.Step
+		var skippedResults []StepResult
+		conditionTraces := make(map[string]*ConditionTrace)
+
+		for _, step := range activeSteps {
+			shouldRun := true
+			var condTrace *ConditionTrace
+
+			if step.When != "" {
+				result, err := expr.EvaluateBool(step.When, r.memory)
+				condTrace = &ConditionTrace{Raw: step.When, Result: result}
+				conditionTraces[step.ID] = condTrace
+
+				if err != nil {
+					fmt.Printf("Error evaluating condition for step %s: %v\n", step.ID, err)
+					shouldRun = false
+				} else {
+					shouldRun = result
+				}
+			}
+
+			if shouldRun {
+				stepsToExecute = append(stepsToExecute, step)
+			} else {
+				skippedResults = append(skippedResults, StepResult{
+					NodeName:  step.ID,
+					Status:    "skipped",
+					Condition: condTrace,
+				})
+			}
+		}
+
+		fmt.Printf("Superstep: Executing %d steps (Skipped: %d)...\n", len(stepsToExecute), len(skippedResults))
+
+		var results []StepResult
+		if len(stepsToExecute) > 0 {
+			results = r.runSuperstep(stepsToExecute)
+		}
+
+		results = append(results, skippedResults...)
+
+		// Attach condition info to executed results if missing (runSuperstep doesn't set it)
+		for i := range results {
+			if results[i].Condition == nil {
+				if ct, ok := conditionTraces[results[i].NodeName]; ok {
+					results[i].Condition = ct
+				}
+			}
+			// Also set Status to "executed" if empty (for non-skipped steps)
+			if results[i].Status == "" {
+				results[i].Status = "executed"
+			}
+		}
+
 		r.mergeResults(results, executedSteps)
 
 		lastResults = results
@@ -72,10 +138,6 @@ func (r *WorkflowRuntime) mergeResults(results []StepResult, executedSteps map[s
 
 		if res.Err != nil {
 			fmt.Printf("Error in step %s: %v\n", res.NodeName, res.Err)
-			// Continue even if error, unless strategy was fail (which is handled in executeSingleStep by returning Err)
-			// If executeSingleStep returned Err, it means it failed after retries/fallback.
-			// So we probably should stop or at least record it.
-			// For now, we just log.
 		}
 
 		// Record Trace
@@ -90,6 +152,9 @@ func (r *WorkflowRuntime) mergeResults(results []StepResult, executedSteps map[s
 			Strategy:  res.Strategy,
 			Fallback:  res.Fallback,
 			Ignored:   res.Ignored,
+			Status:    res.Status,
+			Condition: res.Condition,
+			Routing:   res.Routing,
 		})
 
 		if res.Output != nil {

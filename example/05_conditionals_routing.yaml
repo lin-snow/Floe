@@ -1,0 +1,73 @@
+workflow:
+  name: conditionals_routing_demo
+  memory:
+    initial:
+      global.user_type: "premium"
+      global.status: 200
+      global.next_target: "target_a"
+
+  steps:
+    # 1. Conditional Execution (When)
+    # Note: Expressions must use double quotes for strings (Go syntax).
+    # Variables should be quoted if they are strings: "${var}"
+    - id: check_premium
+      type: task
+      tool: summarize
+      input:
+        text: "User is premium"
+      when: "\"${global.user_type}\" == \"premium\""
+      output: global.premium_check
+
+    - id: check_regular
+      type: task
+      tool: summarize
+      input:
+        text: "User is regular"
+      when: "\"${global.user_type}\" == \"regular\""
+      output: global.regular_check
+
+    # 2. Dynamic Routing (Next Map)
+    - id: route_by_status
+      type: task
+      tool: summarize
+      input:
+        text: "Routing based on status..."
+      next:
+        # Keys are expressions, must be valid Go boolean expressions
+        # Status is int, so no quotes needed for value
+        "${global.status} == 200": "success_path"
+        "${global.status} != 200": "failure_path"
+
+    - id: success_path
+      type: task
+      tool: summarize
+      input:
+        text: "Success path executed"
+      next: dynamic_expr_step
+
+    - id: failure_path
+      type: task
+      tool: summarize
+      input:
+        text: "Failure path executed"
+      next: dynamic_expr_step
+
+    # 3. Dynamic Routing (Next Expression)
+    - id: dynamic_expr_step
+      type: task
+      tool: summarize
+      input:
+        text: "Dynamic expression step"
+      next: "${global.next_target}"
+
+    - id: target_a
+      type: task
+      tool: summarize
+      input:
+        text: "Target A reached"
+
+    - id: target_b
+      type: task
+      tool: summarize
+      input:
+        text: "Target B reached"

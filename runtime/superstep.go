@@ -11,15 +11,18 @@ import (
 )
 
 type StepResult struct {
-	NodeName string
-	Output   interface{}
-	Messages map[string]interface{}
-	Err      error
-	Retries  int
-	Ignored  bool
-	Fallback string
-	Strategy string
-	ErrorMsg string
+	NodeName  string
+	Output    interface{}
+	Messages  map[string]interface{}
+	Err       error
+	Retries   int
+	Ignored   bool
+	Fallback  string
+	Strategy  string
+	ErrorMsg  string
+	Status    string          // executed | skipped
+	Condition *ConditionTrace // Condition trace info
+	Routing   *RoutingTrace   // Routing trace info
 }
 
 func (r *WorkflowRuntime) runSuperstep(steps []dsl.Step) []StepResult {
@@ -53,8 +56,7 @@ func (r *WorkflowRuntime) executeSingleStep(step *dsl.Step) StepResult {
 	}
 
 	for {
-		// 1. Resolve Inputs (do this every retry in case memory changed? No, memory is snapshot for superstep)
-		// Actually inputs are resolved from memory. Memory is read-safe.
+		// 1. Resolve Inputs
 		input := make(map[string]interface{})
 		for k, v := range step.Input {
 			if strVal, ok := v.(string); ok {
@@ -92,20 +94,20 @@ func (r *WorkflowRuntime) executeSingleStep(step *dsl.Step) StepResult {
 					Strategy: "retry-fallback",
 					ErrorMsg: err.Error(),
 					Retries:  retries,
+					Status:   "executed",
 				}
 			}
 			// Fall through to fail
 			finalErr = fmt.Errorf("max retries exceeded: %w", err)
 		} else if action.Type == ActionIgnore {
-			// Ignore error, treat as success but with empty output?
-			// Or explicit ignored status.
-			// We will return a result with Ignored=true
+			// Ignore error
 			return StepResult{
 				NodeName: step.ID,
 				Err:      nil, // Clear error so runtime continues
 				Ignored:  true,
 				ErrorMsg: err.Error(),
 				Strategy: "ignore",
+				Status:   "executed",
 			}
 		} else if action.Type == ActionFallback {
 			// Return fallback step name
@@ -115,6 +117,7 @@ func (r *WorkflowRuntime) executeSingleStep(step *dsl.Step) StepResult {
 				Fallback: action.FallbackStepName,
 				Strategy: "fallback",
 				ErrorMsg: err.Error(),
+				Status:   "executed",
 			}
 		} else {
 			// Fail
@@ -130,6 +133,7 @@ func (r *WorkflowRuntime) executeSingleStep(step *dsl.Step) StepResult {
 			Retries:  retries,
 			Strategy: "fail",
 			ErrorMsg: finalErr.Error(),
+			Status:   "executed",
 		}
 	}
 
@@ -145,6 +149,7 @@ func (r *WorkflowRuntime) executeSingleStep(step *dsl.Step) StepResult {
 		Messages: messages,
 		Err:      nil,
 		Retries:  retries,
+		Status:   "executed",
 	}
 }
 

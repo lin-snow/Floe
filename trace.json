@@ -1,53 +1,147 @@
 {
   "steps": [
     {
-      "step_name": "retry_step",
+      "step_name": "check_premium",
       "input": {
         "global": {
-          "retry_count": 0
+          "next_target": "target_a",
+          "status": 200,
+          "user_type": "premium"
+        }
+      },
+      "output": "Summary: Text contains 3 words. Preview: User is premium...",
+      "timestamp": "2025-11-19T17:51:18.733612+08:00",
+      "status": "executed",
+      "condition": {
+        "raw": "\"${global.user_type}\" == \"premium\"",
+        "result": true
+      },
+      "routing": {
+        "raw": "\u003cnil\u003e",
+        "result": ""
+      }
+    },
+    {
+      "step_name": "check_regular",
+      "input": {
+        "global": {
+          "next_target": "target_a",
+          "premium_check": "Summary: Text contains 3 words. Preview: User is premium...",
+          "status": 200,
+          "user_type": "premium"
         }
       },
       "output": null,
-      "timestamp": "2025-11-19T17:29:01.8105777+08:00",
-      "error": "Get \"http://localhost:9999/nonexistent\": dial tcp [::1]:9999: connectex: No connection could be made because the target machine actively refused it.",
-      "retries": 2,
-      "strategy": "retry-fallback",
-      "fallback": "fallback_handler"
+      "timestamp": "2025-11-19T17:51:18.733612+08:00",
+      "status": "skipped",
+      "condition": {
+        "raw": "\"${global.user_type}\" == \"regular\"",
+        "result": false
+      },
+      "routing": {
+        "raw": "\u003cnil\u003e",
+        "result": ""
+      }
     },
     {
-      "step_name": "fallback_handler",
+      "step_name": "route_by_status",
       "input": {
         "global": {
-          "retry_count": 0
+          "next_target": "target_a",
+          "premium_check": "Summary: Text contains 3 words. Preview: User is premium...",
+          "status": 200,
+          "user_type": "premium"
         }
       },
-      "output": "Summary: Text contains 6 words. Preview: Fallback triggered due to retry_step failure....",
-      "timestamp": "2025-11-19T17:29:01.8105777+08:00"
+      "output": "Summary: Text contains 4 words. Preview: Routing based on status......",
+      "timestamp": "2025-11-19T17:51:18.733612+08:00",
+      "status": "executed",
+      "routing": {
+        "raw": "map[${global.status} != 200:failure_path ${global.status} == 200:success_path]",
+        "result": "success_path"
+      }
     },
     {
-      "step_name": "ignore_step",
+      "step_name": "success_path",
       "input": {
         "global": {
-          "fallback_result": "Summary: Text contains 6 words. Preview: Fallback triggered due to retry_step failure....",
-          "retry_count": 0
+          "next_target": "target_a",
+          "premium_check": "Summary: Text contains 3 words. Preview: User is premium...",
+          "route_by_status": "Summary: Text contains 4 words. Preview: Routing based on status......",
+          "status": 200,
+          "user_type": "premium"
         }
       },
-      "output": null,
-      "timestamp": "2025-11-19T17:29:01.8116225+08:00",
-      "error": "Get \"http://localhost:9999/another_fail\": dial tcp [::1]:9999: connectex: No connection could be made because the target machine actively refused it.",
-      "strategy": "ignore",
-      "ignored": true
+      "output": "Summary: Text contains 3 words. Preview: Success path executed...",
+      "timestamp": "2025-11-19T17:51:18.7341369+08:00",
+      "status": "executed",
+      "routing": {
+        "raw": "dynamic_expr_step",
+        "result": "dynamic_expr_step"
+      }
     },
     {
-      "step_name": "success_step",
+      "step_name": "dynamic_expr_step",
       "input": {
         "global": {
-          "fallback_result": "Summary: Text contains 6 words. Preview: Fallback triggered due to retry_step failure....",
-          "retry_count": 0
+          "next_target": "target_a",
+          "premium_check": "Summary: Text contains 3 words. Preview: User is premium...",
+          "route_by_status": "Summary: Text contains 4 words. Preview: Routing based on status......",
+          "status": 200,
+          "success_path": "Summary: Text contains 3 words. Preview: Success path executed...",
+          "user_type": "premium"
         }
       },
-      "output": "Summary: Text contains 4 words. Preview: Workflow continued after ignore_step....",
-      "timestamp": "2025-11-19T17:29:01.8116225+08:00"
+      "output": "Summary: Text contains 3 words. Preview: Dynamic expression step...",
+      "timestamp": "2025-11-19T17:51:18.7341369+08:00",
+      "status": "executed",
+      "routing": {
+        "raw": "${global.next_target}",
+        "result": "target_a"
+      }
+    },
+    {
+      "step_name": "target_a",
+      "input": {
+        "global": {
+          "dynamic_expr_step": "Summary: Text contains 3 words. Preview: Dynamic expression step...",
+          "next_target": "target_a",
+          "premium_check": "Summary: Text contains 3 words. Preview: User is premium...",
+          "route_by_status": "Summary: Text contains 4 words. Preview: Routing based on status......",
+          "status": 200,
+          "success_path": "Summary: Text contains 3 words. Preview: Success path executed...",
+          "user_type": "premium"
+        }
+      },
+      "output": "Summary: Text contains 3 words. Preview: Target A reached...",
+      "timestamp": "2025-11-19T17:51:18.7341369+08:00",
+      "status": "executed",
+      "routing": {
+        "raw": "\u003cnil\u003e",
+        "result": ""
+      }
+    },
+    {
+      "step_name": "target_b",
+      "input": {
+        "global": {
+          "dynamic_expr_step": "Summary: Text contains 3 words. Preview: Dynamic expression step...",
+          "next_target": "target_a",
+          "premium_check": "Summary: Text contains 3 words. Preview: User is premium...",
+          "route_by_status": "Summary: Text contains 4 words. Preview: Routing based on status......",
+          "status": 200,
+          "success_path": "Summary: Text contains 3 words. Preview: Success path executed...",
+          "target_a": "Summary: Text contains 3 words. Preview: Target A reached...",
+          "user_type": "premium"
+        }
+      },
+      "output": "Summary: Text contains 3 words. Preview: Target B reached...",
+      "timestamp": "2025-11-19T17:51:18.7341369+08:00",
+      "status": "executed",
+      "routing": {
+        "raw": "\u003cnil\u003e",
+        "result": ""
+      }
     }
   ]
 }

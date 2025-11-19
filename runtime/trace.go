@@ -21,6 +21,19 @@ type TraceEvent struct {
 	Strategy  string                 `json:"strategy,omitempty"` // 错误处理策略
 	Fallback  string                 `json:"fallback,omitempty"` // Fallback 步骤
 	Ignored   bool                   `json:"ignored,omitempty"`  // 是否忽略错误
+	Status    string                 `json:"status,omitempty"`   // executed | skipped
+	Condition *ConditionTrace        `json:"condition,omitempty"`
+	Routing   *RoutingTrace          `json:"routing,omitempty"`
+}
+
+type ConditionTrace struct {
+	Raw    string `json:"raw"`
+	Result bool   `json:"result"`
+}
+
+type RoutingTrace struct {
+	Raw    string `json:"raw"`
+	Result string `json:"result"`
 }
 
 func (r *WorkflowRuntime) SaveTrace(path string) error {
