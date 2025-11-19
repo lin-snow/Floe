@@ -7,16 +7,18 @@ import (
 
 	"floe/dsl"
 	"floe/expr"
+	"floe/internal/runtime_integration"
 	"floe/memory"
 )
 
 // WorkflowRuntime 是工作流执行的运行时环境。
 // 它管理工作流的生命周期、内存状态、调度和执行跟踪。
 type WorkflowRuntime struct {
-	workflow  *dsl.Workflow  // 工作流定义
-	memory    *memory.Memory // 全局内存
-	scheduler Scheduler      // 调度器
-	trace     *Trace         // 执行跟踪
+	workflow  *dsl.Workflow                  // 工作流定义
+	memory    *memory.Memory                 // 全局内存
+	scheduler Scheduler                      // 调度器
+	trace     *Trace                         // 执行跟踪
+	eventChan chan runtime_integration.Event // 事件通道
 }
 
 // NewRuntime 创建一个新的 WorkflowRuntime 实例。
@@ -33,6 +35,27 @@ func NewRuntime(wf *dsl.Workflow) *WorkflowRuntime {
 		memory:    mem,
 		scheduler: NewBasicScheduler(wf),
 		trace:     &Trace{Steps: []TraceEvent{}},
+		eventChan: make(chan runtime_integration.Event, 100), // Buffered channel
+	}
+}
+
+// Workflow returns the workflow definition
+func (r *WorkflowRuntime) Workflow() *dsl.Workflow {
+	return r.workflow
+}
+
+// Subscribe returns a read-only channel for events
+func (r *WorkflowRuntime) Subscribe() <-chan runtime_integration.Event {
+	return r.eventChan
+}
+
+// Emit sends an event to the event channel
+func (r *WorkflowRuntime) Emit(event runtime_integration.Event) {
+	select {
+	case r.eventChan <- event:
+	default:
+		// Drop event if channel is full to avoid blocking runtime
+		fmt.Println("Warning: event channel full, dropping event")
 	}
 }
 
@@ -40,6 +63,9 @@ func NewRuntime(wf *dsl.Workflow) *WorkflowRuntime {
 // 它使用 Superstep 模式：调度 -> 执行 -> 合并结果，直到没有更多步骤可执行。
 func (r *WorkflowRuntime) Run() error {
 	fmt.Printf("Starting workflow: %s\n", r.workflow.Name)
+	r.Emit(runtime_integration.NewEvent(runtime_integration.EventWorkflowStarted, map[string]interface{}{
+		"workflow_name": r.workflow.Name,
+	}))
 
 	executedSteps := make(map[string]bool)
 	var lastResults []StepResult
@@ -61,6 +87,10 @@ func (r *WorkflowRuntime) Run() error {
 		if len(activeSteps) == 0 {
 			break
 		}
+
+		r.Emit(runtime_integration.NewEvent(runtime_integration.EventSuperstepStart, map[string]interface{}{
+			"active_steps_count": len(activeSteps),
+		}))
 
 		// Filter steps based on 'When' condition
 		var stepsToExecute []dsl.Step
@@ -92,6 +122,10 @@ func (r *WorkflowRuntime) Run() error {
 					Status:    "skipped",
 					Condition: condTrace,
 				})
+				r.Emit(runtime_integration.NewEvent(runtime_integration.EventStepSkipped, map[string]interface{}{
+					"step_id":   step.ID,
+					"condition": condTrace,
+				}))
 			}
 		}
 
@@ -123,6 +157,9 @@ func (r *WorkflowRuntime) Run() error {
 	}
 
 	fmt.Println("Workflow completed successfully.")
+	r.Emit(runtime_integration.NewEvent(runtime_integration.EventWorkflowEnd, map[string]interface{}{
+		"status": "success",
+	}))
 
 	// Save trace
 	if err := r.SaveTrace("trace.json"); err != nil {
@@ -139,6 +176,16 @@ func (r *WorkflowRuntime) mergeResults(results []StepResult, executedSteps map[s
 		if res.Err != nil {
 			fmt.Printf("Error in step %s: %v\n", res.NodeName, res.Err)
 		}
+
+		// Emit Step End Event
+		r.Emit(runtime_integration.NewEvent(runtime_integration.EventStepEnd, map[string]interface{}{
+			"step_id":   res.NodeName,
+			"status":    res.Status,
+			"output":    res.Output,
+			"error":     res.ErrorMsg,
+			"condition": res.Condition,
+			"routing":   res.Routing,
+		}))
 
 		// Record Trace
 		r.trace.Steps = append(r.trace.Steps, TraceEvent{
@@ -159,15 +206,26 @@ func (r *WorkflowRuntime) mergeResults(results []StepResult, executedSteps map[s
 
 		if res.Output != nil {
 			step := r.findStepByID(res.NodeName)
+			var key string
 			if step != nil && step.Output != "" {
-				_ = r.memory.Set(step.Output, res.Output)
+				key = step.Output
 			} else {
-				_ = r.memory.Set("global."+res.NodeName, res.Output)
+				key = "global." + res.NodeName
 			}
+			_ = r.memory.Set(key, res.Output)
+			r.Emit(runtime_integration.NewEvent(runtime_integration.EventMemoryUpdate, map[string]interface{}{
+				"key":   key,
+				"value": res.Output,
+			}))
 		}
 
 		for k, v := range res.Messages {
-			_ = r.memory.Set("messages."+k, v)
+			key := "messages." + k
+			_ = r.memory.Set(key, v)
+			r.Emit(runtime_integration.NewEvent(runtime_integration.EventMemoryUpdate, map[string]interface{}{
+				"key":   key,
+				"value": v,
+			}))
 		}
 	}
 }

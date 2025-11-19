@@ -1,146 +1,157 @@
-# **Floe v0.4 — AI IDE Implementation Guide**
+# Floe v0.5 TUI 技术方案
 
-目标是在现有 v0.3 基础上，为 Floe 增加 **条件执行（Conditionals）** 和 **动态分支（Dynamic Routing）** 功能，同时保持 DSL 的结构化风格、运行时的超步模型、以及可追踪性。
-
----
-
-## **1. 目标功能**
-
-在 v0.4，你需要让 Floe 支持：
-
-### **1. Conditions（if）**
-
-允许每个 Step 指定 `when` 字段，判断当前内存、消息、输入等是否满足条件，若不满足则跳过该 step。
-
-示例：
-
-```
-steps:
-  fetch_user:
-    action: http.get
-    args:
-      url: "https://api/user"
-
-  process_premium_user:
-    when: "${memory.user.type} == 'premium'"
-    action: logic.processPremium
-```
-
-### **2. Dynamic next routing（动态分支）**
-
-允许 Step 的 `next` 字段动态生成。
-
-示例：
-
-```
-next:
-  on_success: "notify"
-  on_failure: "retry_fetch"
-```
-
-或 DSL 表示：
-
-```
-next:
-  route: "${memory.fetch.status == 200 ? 'process' : 'retry'}"
-```
-
-### **3. Runtime 变化**
-
-Scheduler 增加：
-
-- 条件判断逻辑
-- 动态路由解析
-- 生成新的活跃 node 集合
-
-Superstep 模型保持不变。
-
-### **4. Trace 扩展**
-
-在 trace 中记录：
-
-- 条件是否被触发
-- 路由的计算结果
-- 被跳过的 steps
+目标：为 Floe 添加基于终端的交互界面（TUI），用于可视化 workflow、实时观察执行、简单交互（单步/暂停/查看变量）。技术栈：`cobra`（CLI）、`lipgloss`（样式/布局）、`huh`（输入/表单）。后期可扩展到更复杂交互（bubbletea）。
 
 ---
 
-## **2. DSL 需要你实现的变动**
+## 一、总体设计概述（1 层图）
 
-扩展 `Step` 结构：
+- CLI（cobra）负责命令入口与参数解析。命令：`floe tui --file <yaml> [--trace <trace.json>]`、`floe run`、`floe show-trace` 等。
+- Runtime（已有 Go 进程）继续执行 workflow 并**向 TUI 以事件流方式推送**执行事件；TUI 订阅事件并渲染界面。若 runtime 与 TUI 运行在同一进程，可通过内部 channel 通信；若是独立进程，使用本地 websocket 或 Unix socket（v0.5 可先实现同进程 channel 模式）。
+- Trace（trace.json）作为持久化/回放数据源。TUI 可在“回放模式”读取 trace.json 渲染历史执行。
+- UI 层（lipgloss）渲染布局，huh 负责交互输入（选择、确认、简单表单）。
+
+---
+
+## 二、依赖（版本建议）
+
+在 `go.mod` 中添加：
+
+- `github.com/spf13/cobra`
+- `github.com/charmbracelet/lipgloss`
+- `github.com/charmbracelet/huh` （或 `github.com/muesli/huh`，确认你选用的库名）
+  （可选后续）`github.com/charmbracelet/bubbletea`（若要更复杂交互）
+
+---
+
+## 三、项目目录建议（增量式）
 
 ```
-type Step struct {
-    Name      string            `yaml:"-"`
-    Action    string            `yaml:"action"`
-    Args      map[string]any    `yaml:"args"`
-    When      string            `yaml:"when"`
-    Next      any               `yaml:"next"` // string | map[string]string
-    Messages  map[string]any    `yaml:"messages"`
+/cmd/floe/main.go        # cobra CLI root
+/cmd/floe/tui_cmd.go     # tui 子命令
+/internal/tui/
+    app.go               # 启动、事件总线、main loop
+    layout.go            # lipgloss 布局与样式
+    widgets.go           # 各组件（step list, details, variables）
+    input.go             # huh 基本输入封装
+    render.go            # 渲染相关工具
+/internal/runtime_integration/
+    events.go            # 事件类型定义、adapter（channel/socket）
+/example/
+    example.yaml
+```
+
+---
+
+## 四、事件模型（关键契约）
+
+定义 TUI 与 runtime 之间的事件结构（同进程 channel 或 JSON-over-socket）。
+
+```
+type EventType string
+const (
+    EventWorkflowStarted EventType = "workflow_started"
+    EventSuperstepStart  EventType = "superstep_start"
+    EventStepStart       EventType = "step_start"
+    EventStepEnd         EventType = "step_end"
+    EventStepSkipped     EventType = "step_skipped"
+    EventMemoryUpdate    EventType = "memory_update"
+    EventWorkflowEnd     EventType = "workflow_end"
+    EventTraceSnapshot   EventType = "trace_snapshot"
+    EventLog             EventType = "log"
+)
+
+type Event struct {
+    Type      EventType
+    Timestamp time.Time
+    Payload   map[string]interface{}   // 尽量 JSON-serializable
 }
 ```
 
-新增的部分：
+**重要**：Payload 约定要明确，例如 `step_start` 包含 `step_id`, `input_snapshot`；`step_end` 包含 `step_id`, `output`, `status`。
 
-1. **When 字段**：字符串表达式，true 执行，false 跳过。
-2. **Next 字段**可允许：
-   - string: 固定 next
-   - map: 动态选择 next
-   - expression: 返回 step 名
+实现要求：
 
-表达式解析仍沿用 `${ }` 模式。
+- runtime 在合适位置（step start/end、superstep boundary、memory change） `sendEvent(event)`。
+- TUI 提供 `Subscribe()` 以获得事件流；若是 run+TUI 在同进程，将 channel 传入；若是独立进程，提供 socket adapter（留作 v0.6）。
 
 ---
 
-## **3. Runtime 详细要求**
+## 五、TUI 布局草案（lipgloss）
 
-### **3.1 Condition Logic（在调度前进行）**
+目标是清晰、低学习成本、信息密度高。采用三列＋底部状态栏。
 
-在 scheduler 中增加：
+```
++---------------------------------------------+
+| 左栏 (25%) | 中间 (50%)         | 右栏 25%  |
+| Steps List | Step Detail / Trace | Variables |
+|            | (log & messages)    | & Messages |
++---------------------------------------------+
+| Bottom: Controls: [q] quit [p] pause [n] next|
++---------------------------------------------+
+```
 
-- EvaluateCondition(step, memory) → bool
-- 若 false，则将该 step 标记为 “skipped” 并写入 trace
+组件说明：
 
-你需要在 scheduler 开始本轮 superstep 调度前判断哪些 step 应执行。
+- **Steps List**：树或序列化视图，支持高亮当前 step、标记 executed/skipped/failed（颜色区分）。
+- **Step Detail**：显示输入、输出、messages、condition、routing（来自 trace/事件）。
+- **Variables**：global memory snapshot（可折叠展示 JSON 树）。
+- **Bottom Controls**：提示键位；当处于“单步”或“paused”时显示当前状态。
 
-### **3.2 Dynamic Routing**
-
-在解析 `next` 时需要支持三类：
-
-- **string**：直接返回
-- **map**：基于运行结果或 messages 判断属于哪个 key
-- **expression**：返回 step 名称
-
-运行时的规则：
-
-优先级 = map.route > string > expression
-
-### **3.3 超步模型集成**
-
-保持 superstep：
-
-- single step 不变
-- 合并 outputs → 更新 memory
-- 合并 messages → 更新 memory
-- 根据 next 结果生成下一轮 active set
+样式用 lipgloss 封装到 `layout.go`，提供 `StyleStepExecuted`, `StyleStepSkipped`, `StyleHighlight`, `StylePanel` 等。
 
 ---
 
-## **4. Trace 扩展要求**
+## 六、交互模型（huh）
 
-trace.json 每个 step 需要新增字段：
+v0.5 的交互不复杂，主要覆盖：
+
+- 选择文件（若 CLI 未指定）；
+- 在 Steps List 中上下移动并按 Enter 查看详情；
+- 启动/暂停/单步/恢复；
+- 在运行时可按 `v` 查看 variables，`t` 切换 trace 回放模式；
+- 在 paused 状态允许对某个 global variable 进行临时修改（用于调试），确认后更新 memory（通过 runtime 接口）。
+
+示例输入流程（用 huh 组合）：
 
 ```
-{
-  "step": "process_premium_user",
-  "status": "skipped | executed",
-  "condition": {
-    "raw": "${memory.user.type} == 'premium'",
-    "result": true
-  },
-  "routing": {
-    "raw": "memory.fetch.status == 200 ? 'process' : 'retry'",
-    "result": "process"
-  }
-}
+choice := huh.NewSelect("Choose file", &filePath).
+    Options(fileList...).
+    Run()
 ```
+
+实现约束：
+
+- 输入操作不要阻塞事件接收；用 goroutine 做 blocking 输入并与主渲染循环通过 channel 交互。
+
+---
+
+## 七、实现细节（关键点、陷阱与建议）
+
+### 七点关键实现说明
+
+1. **事件到 UI 的异步消费**
+   - 主渲染循环必须从事件 channel 非阻塞读取并调用 render 更新，避免 UI 卡死。
+   - 使用缓冲 channel（例如 100）防止短期事件高峰丢失。
+2. **渲染频率控制**
+   - 为避免过度重绘，采用节流：例如每 100ms 刷新一次（除非有 step 状态变化重要事件则立即刷新）。
+3. **Snapshot vs Live**
+   - 对 memory 的展示使用 `Snapshot()`（deep copy）以防渲染时数据被 runtime 修改引发 race。
+   - 若与 runtime 同进程，确保 `Snapshot()` 在 Memory 内部做 RLock。
+4. **回放模式**
+   - 实现一个 `LoadTrace(path)`，读取 trace.json 并以事件序列回放。
+   - 回放速度可控（速率、暂停、跳转到时间点）。
+5. **单步 & Pause**
+   - 当用户按 pause：runtime 应支持 `Pause()` 或 TUI 采用“控制运行”方式（若 runtime 不能 pause，TUI 可模拟：在 superstep boundary 自动停止并等待用户继续）。
+   - 推荐在 runtime 增加 `ControlChannel`：`type ControlCmd string` 支持 `Pause`, `Resume`, `StepOnce`.
+6. **错误显示**
+   - 把 step error、expression eval error 等在 Step Detail 高亮展示，并在 Bottom Controls 显示提示。
+7. **日志与滚动**
+   - Step Detail 内部提供日志滚动区（lipgloss 渲染 + 简单缓冲），并支持 `PgUp/PgDn` 键。
+
+---
+
+## 八、运行模式（两种，v0.5 支持模式一）
+
+**模式 A（嵌入式）**：`floe tui --file X.yaml` 在同一进程内，TUI 启动 runtime 并订阅内部 event channel（推荐 v0.5 优先实现）。
+优点：无需 IPC；实现简单。

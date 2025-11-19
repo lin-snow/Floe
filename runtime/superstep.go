@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"floe/dsl"
+	"floe/internal/runtime_integration"
 	"floe/tools"
 )
 
@@ -43,6 +44,11 @@ func (r *WorkflowRuntime) runSuperstep(steps []dsl.Step) []StepResult {
 }
 
 func (r *WorkflowRuntime) executeSingleStep(step *dsl.Step) StepResult {
+	r.Emit(runtime_integration.NewEvent(runtime_integration.EventStepStart, map[string]interface{}{
+		"step_id": step.ID,
+		"tool":    step.Tool,
+	}))
+
 	var finalErr error
 	var output interface{}
 	var messages map[string]interface{}
