@@ -10,7 +10,7 @@
         }
       },
       "output": "Summary: Text contains 3 words. Preview: User is premium...",
-      "timestamp": "2025-11-19T18:27:35.8815564+08:00",
+      "timestamp": "2025-11-19T18:32:54.0763329+08:00",
       "status": "executed",
       "condition": {
         "raw": "\"${global.user_type}\" == \"premium\"",
@@ -32,7 +32,7 @@
         }
       },
       "output": null,
-      "timestamp": "2025-11-19T18:27:35.882085+08:00",
+      "timestamp": "2025-11-19T18:32:54.0769092+08:00",
       "status": "skipped",
       "condition": {
         "raw": "\"${global.user_type}\" == \"regular\"",
@@ -54,7 +54,7 @@
         }
       },
       "output": "Summary: Text contains 4 words. Preview: Routing based on status......",
-      "timestamp": "2025-11-19T18:27:35.882085+08:00",
+      "timestamp": "2025-11-19T18:32:54.0769092+08:00",
       "status": "executed",
       "routing": {
         "raw": "map[${global.status} != 200:failure_path ${global.status} == 200:success_path]",
@@ -73,7 +73,7 @@
         }
       },
       "output": "Summary: Text contains 3 words. Preview: Success path executed...",
-      "timestamp": "2025-11-19T18:27:35.8826061+08:00",
+      "timestamp": "2025-11-19T18:32:54.0769092+08:00",
       "status": "executed",
       "routing": {
         "raw": "dynamic_expr_step",
@@ -93,7 +93,7 @@
         }
       },
       "output": "Summary: Text contains 3 words. Preview: Dynamic expression step...",
-      "timestamp": "2025-11-19T18:27:35.8826061+08:00",
+      "timestamp": "2025-11-19T18:32:54.0769092+08:00",
       "status": "executed",
       "routing": {
         "raw": "${global.next_target}",
@@ -114,7 +114,7 @@
         }
       },
       "output": "Summary: Text contains 3 words. Preview: Target A reached...",
-      "timestamp": "2025-11-19T18:27:35.8826061+08:00",
+      "timestamp": "2025-11-19T18:32:54.0769092+08:00",
       "status": "executed",
       "routing": {
         "raw": "\u003cnil\u003e",
@@ -136,7 +136,7 @@
         }
       },
       "output": "Summary: Text contains 3 words. Preview: Target B reached...",
-      "timestamp": "2025-11-19T18:27:35.8826061+08:00",
+      "timestamp": "2025-11-19T18:32:54.0769092+08:00",
       "status": "executed",
       "routing": {
         "raw": "\u003cnil\u003e",
